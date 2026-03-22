@@ -121,3 +121,44 @@ with tab2:
             if response.status_code == 200:
                 data = response.json()
                 if data.get('events'):
+                    event = data['events'][0]
+                    price = event['stats'].get('lowest_price')
+                    
+                    if price:
+                        st.metric(label=f"Next Event: {event['title']}", value=f"${price}")
+                        update_price_log("Sports", team, price)
+                    else:
+                        st.info("Event found, but no live pricing is currently available.")
+                else:
+                    st.warning("No upcoming events found for that team.")
+            else:
+                st.error("Could not connect to SeatGeek.")
+
+# --- TAB 3: PRICE HISTORY (GSHEETS) ---
+with tab3:
+    st.header("📈 Price History Trends")
+    try:
+        history_df = conn.read()
+        if history_df is not None and not history_df.empty and 'Item' in history_df.columns:
+            # Dropdown to select which item to view
+            unique_items = history_df['Item'].unique()
+            selected_item = st.selectbox("Select a Saved Item to View History", unique_items)
+            
+            # Filter and Plot
+            plot_data = history_df[history_df['Item'] == selected_item].copy()
+            plot_data['Date'] = pd.to_datetime(plot_data['Date'])
+            
+            st.subheader(f"Price Trend for {selected_item}")
+            st.line_chart(plot_data.set_index('Date')['Price'])
+            
+            st.subheader("Raw Log Data")
+            st.dataframe(plot_data.sort_values(by="Date", ascending=False), use_container_width=True)
+        else:
+            st.info("No data has been logged to your Google Sheet yet. Perform a search to begin tracking!")
+    except Exception as e:
+        st.error(f"Could not load history from GSheets: {e}")
+
+# Sidebar Info
+st.sidebar.title("Agent Status")
+st.sidebar.info("Connected to Duffel, SeatGeek, and Google Sheets.")
+st.sidebar.write(f"Local time: {datetime.now().strftime('%H:%M:%S')}")
