@@ -1,3 +1,5 @@
 streamlit
 requests
 duffel-api
+st-gsheets-connection
+google-auth
