@@ -2,15 +2,10 @@ import streamlit as st
 import requests
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Price Agent", layout="wide")
-st.title("🤖 Elite Price Agent")
-
-tab1, tab2 = st.tabs(["✈️ Flights", "🏀 Sports"])
-
+# --- TRIP SETTINGS (Now inside the tab) ---
 with tab1:
-    st.header("Search Flights")
+    st.header("✈️ Search Flights")
     
-    # Settings moved from sidebar to here
     col_settings, col_dates = st.columns([1, 2])
     with col_settings:
         trip_type = st.radio("Trip Type", ["One-Way", "Round-Trip"], horizontal=True)
@@ -25,7 +20,7 @@ with tab1:
         dep_date = col_d1.date_input("Departure", datetime.now() + timedelta(days=14))
         ret_date = col_d2.date_input("Return", datetime.now() + timedelta(days=21))
 
-    if st.button("🔍 Find Best Deal"):
+    if st.button("🔍 Find Top 3 Lowest Prices"):
         headers = {
             "Authorization": f"Bearer {st.secrets['DUFFEL_TOKEN']}",
             "Duffel-Version": "v2",
@@ -38,36 +33,42 @@ with tab1:
 
         payload = {"data": {"slices": slices, "passengers": [{"type": "adult"}], "cabin_class": cabin}}
 
-        response = requests.post("https://api.duffel.com/air/offer_requests", json=payload, headers=headers)
-        
-        if response.status_code == 201:
-            offers = response.json()['data']['offers']
-            if offers:
-                # Sort by price and take the best one
-                best = min(offers, key=lambda x: float(x['total_amount']))
-                
-                st.divider()
-                st.subheader(f"✅ Best Match: {best['total_currency']} {best['total_amount']}")
-                
-                # Digging into the slices to get flight info
-                for i, s in enumerate(best['slices']):
-                    direction = "Departure" if i == 0 else "Return"
-                    st.write(f"**{direction} Flight:**")
+        with st.spinner("Finding the cheapest seats..."):
+            response = requests.post("https://api.duffel.com/air/offer_requests", json=payload, headers=headers)
+            
+            if response.status_code == 201:
+                offers = response.json()['data']['offers']
+                if offers:
+                    # SORTING: Sort all offers by total_amount (price)
+                    sorted_offers = sorted(offers, key=lambda x: float(x['total_amount']))
                     
-                    for segment in s['segments']:
-                        airline = segment['marketing_carrier']['name']
-                        flight_no = f"{segment['marketing_carrier_flight_number']}"
-                        dep_time = segment['departing_at'].replace('T', ' ')[:16]
-                        arr_time = segment['arriving_at'].replace('T', ' ')[:16]
-                        
-                        st.info(f"✈️ **{airline}** (Flight #{flight_no})  \n"
-                                f"🛫 Leaves: {dep_time}  \n"
-                                f"🛬 Arrives: {arr_time}")
+                    # TAKE TOP 3: slice the first three items
+                    top_3 = sorted_offers[:3]
+                    
+                    st.divider()
+                    st.subheader(f"🏆 Top 3 Lowest {cabin.title()} Prices")
+                    
+                    for idx, offer in enumerate(top_3):
+                        # Create a "card" for each offer
+                        with st.container():
+                            col_price, col_details = st.columns([1, 3])
+                            
+                            # Price Column
+                            col_price.metric(f"Option #{idx+1}", f"{offer['total_currency']} {offer['total_amount']}")
+                            
+                            # Details Column
+                            with col_details:
+                                for i, s in enumerate(offer['slices']):
+                                    label = "🛫 Departure" if i == 0 else "🛬 Return"
+                                    # Get info from the first segment of the slice
+                                    seg = s['segments'][0]
+                                    airline = seg['marketing_carrier']['name']
+                                    f_no = f"{seg['marketing_carrier']['iata_code']} {seg['marketing_carrier_flight_number']}"
+                                    d_time = seg['departing_at'].replace('T', ' ')[:16]
+                                    
+                                    st.write(f"**{label}:** {airline} ({f_no}) at {d_time}")
+                            st.divider()
+                else:
+                    st.warning("No flights found. Try expanding your search criteria.")
             else:
-                st.warning("No flights found for these specific criteria.")
-        else:
-            st.error(f"Error: {response.json()['errors'][0]['message']}")
-
-with tab2:
-    st.header("Sports Tracker")
-    st.write("SeatGeek integration goes here...")
+                st.error(f"Error: {response.json()['errors'][0]['message']}")
