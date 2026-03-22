@@ -1,5 +1,5 @@
-streamlit
-requests
-duffel-api
 st-gsheets-connection
+pandas
 google-auth
+duffel-api
+requests
