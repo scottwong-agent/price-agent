@@ -101,3 +101,15 @@ with tab2:
                     st.warning("No upcoming events found for that team.")
             except Exception as e:
                 st.error(f"SeatGeek Error: {e}")
+from streamlit_gsheets import GSheetsConnection
+
+# Create the connection
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Try to read the sheet
+try:
+    df = conn.read()
+    st.write("Successfully connected to Google Sheets!")
+    st.dataframe(df.head())
+except Exception as e:
+    st.error(f"Connection failed: {e}")
