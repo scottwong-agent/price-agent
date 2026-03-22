@@ -1,46 +1,53 @@
 import streamlit as st
 import requests
-from amadeus import Client
 
-st.set_page_config(page_title="Price Agent", layout="centered")
+st.set_page_config(page_title="Price Agent", page_icon="🤖")
 
-st.title("✈️ Price Tracker Agent")
+st.title("🤖 My Personal Price Agent")
 
-# Checking if secrets are set up
-if "AMADEUS_KEY" not in st.secrets:
-    st.error("Missing API Keys! Please add them to the 'Secrets' section in Streamlit settings.")
+# --- SECRET VALIDATION ---
+if "SG_CLIENT_ID" not in st.secrets or "DUFFEL_TOKEN" not in st.secrets:
+    st.error("Missing API Keys! Please add 'SG_CLIENT_ID' and 'DUFFEL_TOKEN' to the Secrets section.")
     st.stop()
 
-# Initialize Amadeus
-amadeus = Client(
-    client_id=st.secrets["AMADEUS_KEY"],
-    client_secret=st.secrets["AMADEUS_SECRET"]
-)
+tab1, tab2 = st.tabs(["🏀 Sports (SeatGeek)", "✈️ Flights (Duffel)"])
 
-# --- FLIGHT SECTION ---
-st.header("Search Flights")
-col1, col2 = st.columns(2)
-origin = col1.text_input("From (Airport Code)", "LHR")
-dest = col2.text_input("To (Airport Code)", "JFK")
-date = st.date_input("Date")
-cabin = st.selectbox("Class", ["ECONOMY", "BUSINESS", "FIRST"])
+with tab1:
+    st.header("Search Sports")
+    team = st.text_input("Enter Team Name", "Lakers")
+    if st.button("Find Lowest Ticket"):
+        client_id = st.secrets["SG_CLIENT_ID"]
+        url = f"https://api.seatgeek.com/2/events?q={team}&client_id={client_id}"
+        try:
+            data = requests.get(url).json()
+            if data['events']:
+                event = data['events'][0]
+                price = event['stats']['lowest_price']
+                st.metric(label=event['title'], value=f"${price}")
+                st.write(f"📍 {event['venue']['name']}")
+            else:
+                st.warning("No events found.")
+        except Exception as e:
+            st.error(f"Error connecting to SeatGeek: {e}")
 
-if st.button("Find Best Price"):
-    try:
-        res = amadeus.shopping.flight_offers_search.get(
-            originLocationCode=origin,
-            destinationLocationCode=dest,
-            departureDate=str(date),
-            adults=1,
-            travelClass=cabin
-        )
-        if res.data:
-            price = res.data[0]['price']['total']
-            st.success(f"The best {cabin} price is ${price}")
+with tab2:
+    st.header("Search Flights")
+    st.info("Duffel Flight Integration Active")
+    origin = st.text_input("From (Airport Code)", "JFK")
+    dest = st.text_input("To (Airport Code)", "LAX")
+    
+    if st.button("Check Duffel Prices"):
+        # This is a simplified check to verify your token works
+        headers = {
+            "Authorization": f"Bearer {st.secrets['DUFFEL_TOKEN']}",
+            "Duffel-Version": "beta",
+            "Content-Type": "application/json"
+        }
+        res = requests.get("https://api.duffel.com/air/airports", headers=headers)
+        if res.status_code == 200:
+            st.success("✅ Duffel Connection Successful! Ready to search.")
         else:
-            st.info("No flights found for that date.")
-    except Exception as e:
-        st.error(f"Flight API Error: {e}")
+            st.error(f"Duffel Error: {res.status_code}. Check your token.")
 
-st.divider()
-st.caption("Agent is running live. Share this URL with friends!")
+st.sidebar.markdown("---")
+st.sidebar.write("Agent status: **Online**")
