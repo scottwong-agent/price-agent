@@ -3,3 +3,4 @@ pandas
 google-auth
 duffel-api
 requests
+streamlit
