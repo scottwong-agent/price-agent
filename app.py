@@ -113,3 +113,33 @@ try:
     st.dataframe(df.head())
 except Exception as e:
     st.error(f"Connection failed: {e}")
+def update_price_log(category, item, current_price):
+    try:
+        # 1. Read the current sheet
+        df = conn.read()
+        
+        # 2. Check the last recorded price for this specific item
+        # We filter the sheet for the same Category and Item
+        item_history = df[(df['Category'] == category) & (df['Item'] == item)]
+        
+        last_price = None
+        if not item_history.empty:
+            # Get the very last price entered
+            last_price = item_history.iloc[-1]['Price']
+        
+        # 3. Only Save if the price is different (or if it's the first time)
+        if last_price is None or float(current_price) != float(last_price):
+            new_row = pd.DataFrame([{
+                "Date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "Category": category,
+                "Item": item,
+                "Price": float(current_price)
+            }])
+            updated_df = pd.concat([df, new_row], ignore_index=True)
+            conn.update(data=updated_df)
+            st.toast(f"✅ Price Change Detected! Logged ${current_price}", icon="📈")
+        else:
+            st.toast("Check complete: Price has not changed.", icon="😴")
+            
+    except Exception as e:
+        st.error(f"Logging error: {e}")
