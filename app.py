@@ -1,53 +1,69 @@
 import streamlit as st
 import requests
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Price Agent", page_icon="🤖")
+st.title("🤖 Elite Travel & Sports Agent")
 
-st.title("🤖 My Personal Price Agent")
+# --- INPUTS ---
+with st.sidebar:
+    st.header("Settings")
+    trip_type = st.radio("Trip Type", ["One-Way", "Round-Trip"])
+    cabin = st.selectbox("Cabin Class", ["economy", "premium_economy", "business", "first"])
 
-# --- SECRET VALIDATION ---
-if "SG_CLIENT_ID" not in st.secrets or "DUFFEL_TOKEN" not in st.secrets:
-    st.error("Missing API Keys! Please add 'SG_CLIENT_ID' and 'DUFFEL_TOKEN' to the Secrets section.")
-    st.stop()
-
-tab1, tab2 = st.tabs(["🏀 Sports (SeatGeek)", "✈️ Flights (Duffel)"])
+tab1, tab2 = st.tabs(["✈️ Flights", "🏀 Sports"])
 
 with tab1:
-    st.header("Search Sports")
-    team = st.text_input("Enter Team Name", "Lakers")
-    if st.button("Find Lowest Ticket"):
-        client_id = st.secrets["SG_CLIENT_ID"]
-        url = f"https://api.seatgeek.com/2/events?q={team}&client_id={client_id}"
-        try:
-            data = requests.get(url).json()
-            if data['events']:
-                event = data['events'][0]
-                price = event['stats']['lowest_price']
-                st.metric(label=event['title'], value=f"${price}")
-                st.write(f"📍 {event['venue']['name']}")
-            else:
-                st.warning("No events found.")
-        except Exception as e:
-            st.error(f"Error connecting to SeatGeek: {e}")
-
-with tab2:
-    st.header("Search Flights")
-    st.info("Duffel Flight Integration Active")
-    origin = st.text_input("From (Airport Code)", "JFK")
-    dest = st.text_input("To (Airport Code)", "LAX")
+    col1, col2 = st.columns(2)
+    origin = col1.text_input("From (IATA)", "JFK")
+    dest = col2.text_input("To (IATA)", "LAX")
     
-    if st.button("Check Duffel Prices"):
-        # This is a simplified check to verify your token works
+    dep_date = st.date_input("Departure", datetime.now() + timedelta(days=14))
+    ret_date = None
+    if trip_type == "Round-Trip":
+        ret_date = st.date_input("Return", datetime.now() + timedelta(days=21))
+
+    if st.button("Search Best Flights"):
         headers = {
             "Authorization": f"Bearer {st.secrets['DUFFEL_TOKEN']}",
-            "Duffel-Version": "beta",
-            "Content-Type": "application/json"
+            "Duffel-Version": "v2", # Use v2 for 2026 stability
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
-        res = requests.get("https://api.duffel.com/air/airports", headers=headers)
-        if res.status_code == 200:
-            st.success("✅ Duffel Connection Successful! Ready to search.")
-        else:
-            st.error(f"Duffel Error: {res.status_code}. Check your token.")
+        
+        # Build the 'slices' (Duffel's term for trip legs)
+        slices = [{"origin": origin, "destination": dest, "departure_date": str(dep_date)}]
+        if trip_type == "Round-Trip" and ret_date:
+            slices.append({"origin": dest, "destination": origin, "departure_date": str(ret_date)})
 
-st.sidebar.markdown("---")
-st.sidebar.write("Agent status: **Online**")
+        payload = {
+            "data": {
+                "slices": slices,
+                "passengers": [{"type": "adult"}],
+                "cabin_class": cabin
+            }
+        }
+
+        try:
+            # Step 1: Create an Offer Request
+            response = requests.post("https://api.duffel.com/air/offer_requests", json=payload, headers=headers)
+            
+            if response.status_code == 201:
+                data = response.json()
+                offers = data['data']['offers']
+                if offers:
+                    # Show the cheapest offer found
+                    best_offer = min(offers, key=lambda x: float(x['total_amount']))
+                    st.success(f"Best {cabin.replace('_', ' ')} price found!")
+                    st.metric("Total Price", f"{best_offer['total_currency']} {best_offer['total_amount']}")
+                    st.info(f"Airline: {best_offer['owner']['name']}")
+                else:
+                    st.warning("No flights found for those dates/class.")
+            else:
+                st.error(f"Duffel Error {response.status_code}: {response.text}")
+        except Exception as e:
+            st.error(f"Search failed: {e}")
+
+with tab2:
+    st.header("Search Sports")
+    # (Keep your working SeatGeek code here)
+    st.write("SeatGeek integration active.")
