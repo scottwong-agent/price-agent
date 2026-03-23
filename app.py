@@ -7,153 +7,116 @@ from streamlit_gsheets import GSheetsConnection
 # 1. PAGE SETUP
 st.set_page_config(page_title="Elite Price Agent", layout="wide", page_icon="🕵️")
 
-# 2. INITIALIZE GSHEETS CONNECTION
+# 2. GSHEETS CONNECTION
+# Ensure you have st.secrets["connections"]["gsheets"] set up in Streamlit Cloud
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- FUNCTION: SUBMIT TRACKING REQUEST ---
-def submit_track(category, item, current_price, drop_threshold, metadata):
+def submit_track(category, item, current_price, threshold, metadata):
     try:
+        # Pull existing data to append
         df = conn.read(worksheet="Tracking")
-        if df is None or df.empty:
-            df = pd.DataFrame(columns=["DateStarted", "Category", "Item", "BasePrice", "Threshold", "Metadata", "Status"])
-        
-        new_entry = pd.DataFrame([{
+        new_row = pd.DataFrame([{
             "DateStarted": datetime.now().strftime("%Y-%m-%d"),
             "Category": category,
             "Item": item,
             "BasePrice": float(current_price),
-            "Threshold": int(drop_threshold),
+            "Threshold": int(threshold),
             "Metadata": str(metadata),
             "Status": "Active"
         }])
-        
-        updated_df = pd.concat([df, new_entry], ignore_index=True)
+        updated_df = pd.concat([df, new_row], ignore_index=True)
         conn.update(worksheet="Tracking", data=updated_df)
-        st.toast(f"🎯 Tracking started for {item}!", icon="✅")
+        st.success(f"✅ Target Locked: {item} at ${current_price}")
     except Exception as e:
-        st.error(f"Error saving to Tracking sheet: {e}")
+        st.error(f"Failed to update Google Sheet: {e}")
 
-# --- UI LAYOUT ---
+# --- UI ---
 st.title("🕵️ Elite Price Intelligence Agent")
 st.markdown("---")
 
-tab1, tab2, tab3 = st.tabs(["✈️ Search Flights", "🏀 Search Sports", "📋 Active Watchlist"])
+tab1, tab2, tab3 = st.tabs(["✈️ Flights", "🏀 Sports", "📋 Watchlist"])
 
-# --- TAB 1: FLIGHTS (NEW & IMPROVED) ---
+# --- TAB 1: FLIGHTS (Route Tracking) ---
 with tab1:
-    st.header("Find a Flight to Track")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        origin = st.text_input("From (IATA Code)", "JFK").upper().strip()
+    st.header("Track a Flight Route")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        origin = st.text_input("From (IATA)", "JFK").upper().strip()
         trip_type = st.selectbox("Trip Type", ["One-way", "Round-trip"])
-    with col2:
-        dest = st.text_input("To (IATA Code)", "LAX").upper().strip()
-        cabin = st.selectbox("Cabin Class", ["economy", "premium_economy", "business", "first"])
-    with col3:
-        dep_date = st.date_input("Departure Date", datetime.now() + timedelta(days=30))
-        ret_date = None
-        if trip_type == "Round-trip":
-            ret_date = st.date_input("Return Date", datetime.now() + timedelta(days=37))
+    with c2:
+        dest = st.text_input("To (IATA)", "LAX").upper().strip()
+        cabin = st.selectbox("Class", ["economy", "premium_economy", "business", "first"])
+    with c3:
+        dep_date = st.date_input("Departure", datetime.now() + timedelta(days=30))
+        ret_date = st.date_input("Return", datetime.now() + timedelta(days=37)) if trip_type == "Round-trip" else None
 
-    f_threshold = st.slider("Alert me if price drops by X%:", 5, 50, 10)
+    f_threshold = st.slider("Alert me if price drops by %:", 5, 50, 10)
 
-    if st.button("🔍 Search Best Deals"):
-        with st.spinner("Searching Duffel..."):
+    if st.button("🔍 Find Cheapest in Route"):
+        with st.spinner("Scanning all airlines..."):
             headers = {
                 "Authorization": f"Bearer {st.secrets['DUFFEL_TOKEN']}",
                 "Duffel-Version": "v2",
                 "Content-Type": "application/json"
             }
-            
             slices = [{"origin": origin, "destination": dest, "departure_date": str(dep_date)}]
             if trip_type == "Round-trip" and ret_date:
                 slices.append({"origin": dest, "destination": origin, "departure_date": str(ret_date)})
 
-            payload = {
-                "data": {
-                    "slices": slices, 
-                    "passengers": [{"type": "adult"}], 
-                    "cabin_class": cabin
-                }
-            }
-            
+            payload = {"data": {"slices": slices, "passengers": [{"type": "adult"}], "cabin_class": cabin}}
             res = requests.post("https://api.duffel.com/air/offer_requests", json=payload, headers=headers)
             
             if res.status_code == 201:
                 offers = res.json()['data']['offers']
                 if offers:
-                    # Sort by price and take top 3
                     sorted_offers = sorted(offers, key=lambda x: float(x['total_amount']))[:3]
-                    
-                    st.subheader("🏆 Top 3 Lowest Prices Found")
                     for i, offer in enumerate(sorted_offers):
-                        price = float(offer['total_amount'])
-                        # Get details from the first segment
-                        seg = offer['slices'][0]['segments'][0]
-                        airline = seg['operating_carrier']['name']
-                        flight_no = f"{seg['operating_carrier']['iata_code']}{seg['operating_carrier_flight_number']}"
-                        
                         with st.container(border=True):
-                            c_left, c_mid, c_right = st.columns([2, 2, 1])
-                            c_left.write(f"**{airline}**")
-                            c_left.caption(f"Flight: {flight_no} | Class: {cabin.title()}")
-                            c_mid.write(f"📅 {dep_date}")
-                            if ret_date: c_mid.write(f"🔙 {ret_date}")
-                            c_right.subheader(f"${price}")
-                            
-                            if c_right.button(f"Track This", key=f"f_btn_{i}"):
-                                meta = {
-                                    "origin": origin, "dest": dest, "date": str(dep_date), 
-                                    "return": str(ret_date), "cabin": cabin, "type": trip_type
-                                }
-                                submit_track("Flight", f"{airline} ({origin}-{dest})", price, f_threshold, meta)
-                else:
-                    st.warning("No flights found for those dates.")
-            else:
-                st.error("Duffel API Error. Check your IATA codes.")
+                            col_a, col_b = st.columns([3, 1])
+                            carrier = offer['slices'][0]['segments'][0]['operating_carrier']['name']
+                            price = offer['total_amount']
+                            col_a.write(f"**{carrier}** | {origin} ➔ {dest}")
+                            col_a.caption(f"Class: {cabin.title()} | Total: ${price}")
+                            if col_b.button(f"Track Route @ ${price}", key=f"f_{i}"):
+                                meta = {"origin": origin, "dest": dest, "date": str(dep_date), "return": str(ret_date), "cabin": cabin, "type": trip_type}
+                                submit_track("Flight", f"{origin}-{dest} ({cabin})", price, f_threshold, meta)
+                else: st.warning("No flights found.")
+            else: st.error("Check your IATA codes or API Token.")
 
 # --- TAB 2: SPORTS ---
 with tab2:
-    st.header("Find a Game to Track")
-    team = st.text_input("Team/Event Name", "Lakers")
-    s_threshold = st.slider("Alert me if price drops by X%:", 5, 50, 10, key="s_thresh")
-    
-    if st.button("🔍 Search Games"):
-        url = f"https://api.seatgeek.com/2/events?q={team}&client_id={st.secrets['SG_CLIENT_ID']}"
-        r = requests.get(url).json()
-        st.session_state['found_games'] = r.get('events', [])
+    st.header("Track Sports & Events")
+    query = st.text_input("Search Team or Artist", "Knicks")
+    s_threshold = st.slider("Alert on % drop:", 5, 50, 10, key="s_slider")
 
-    if 'found_games' in st.session_state and st.session_state['found_games']:
-        for i, g in enumerate(st.session_state['found_games'][:5]):
-            price = g['stats'].get('lowest_price')
-            if price:
-                with st.container(border=True):
-                    col_a, col_b = st.columns([3, 1])
-                    col_a.write(f"**{g['title']}**")
-                    col_a.caption(f"Venue: {g['venue']['name']} | Date: {g['datetime_local'][:10]}")
-                    col_b.subheader(f"${price}")
-                    if col_b.button("Track Game", key=f"s_btn_{i}"):
-                        meta = {"event_id": g['id']}
-                        submit_track("Sports", g['short_title'], price, s_threshold, meta)
+    if st.button("🔍 Find Events"):
+        url = f"https://api.seatgeek.com/2/events?q={query}&client_id={st.secrets['SG_CLIENT_ID']}"
+        data = requests.get(url).json()
+        events = data.get('events', [])
+        
+        if events:
+            for i, e in enumerate(events[:5]):
+                low_price = e['stats'].get('lowest_price')
+                if low_price:
+                    with st.container(border=True):
+                        ca, cb = st.columns([3, 1])
+                        ca.write(f"**{e['title']}**")
+                        ca.caption(f"{e['venue']['name']} | {e['datetime_local'][:10]}")
+                        cb.subheader(f"${low_price}")
+                        if cb.button("Track Event", key=f"s_{i}"):
+                            submit_track("Sports", e['short_title'], low_price, s_threshold, {"event_id": e['id']})
+        else: st.info("No upcoming events found.")
 
 # --- TAB 3: WATCHLIST ---
 with tab3:
-    st.header("📋 Your Active Watchlist")
+    st.header("📋 Current Watchlist")
     try:
-        tracks = conn.read(worksheet="Tracking")
-        if tracks is not None and not tracks.empty:
-            active = tracks[tracks['Status'] == 'Active']
-            if active.empty:
-                st.info("No active tracks.")
-            else:
-                st.dataframe(active[['Category', 'Item', 'BasePrice', 'Threshold']])
-                if st.button("Clear All Stopped Tracks"):
-                    # Maintenance option
-                    cleaned = tracks[tracks['Status'] == 'Active']
-                    conn.update(worksheet="Tracking", data=cleaned)
-                    st.rerun()
-        else:
-            st.info("Watchlist is empty.")
-    except:
-        st.warning("Create a 'Tracking' tab in your Google Sheet to see this.")
+        data = conn.read(worksheet="Tracking")
+        if not data.empty:
+            active = data[data['Status'] == 'Active']
+            st.dataframe(active[["DateStarted", "Category", "Item", "BasePrice", "Threshold"]], use_container_width=True)
+            if st.button("🗑️ Clear Stopped Tracks"):
+                conn.update(worksheet="Tracking", data=active)
+                st.rerun()
+        else: st.write("Your watchlist is empty.")
+    except: st.error("Ensure your Google Sheet has a 'Tracking' tab.")
