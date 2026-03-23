@@ -13,8 +13,10 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def submit_track(category, item, current_price, threshold, metadata):
     try:
-        # Pull existing data to append
+        st.write("DEBUG: Attempting to connect to sheet...")
         df = conn.read(worksheet="Tracking")
+        st.write("DEBUG: Sheet read successfully. Current rows:", len(df))
+        
         new_row = pd.DataFrame([{
             "DateStarted": datetime.now().strftime("%Y-%m-%d"),
             "Category": category,
@@ -24,11 +26,14 @@ def submit_track(category, item, current_price, threshold, metadata):
             "Metadata": str(metadata),
             "Status": "Active"
         }])
+        
         updated_df = pd.concat([df, new_row], ignore_index=True)
         conn.update(worksheet="Tracking", data=updated_df)
-        st.success(f"✅ Target Locked: {item} at ${current_price}")
+        st.balloons() # This will be very obvious if it works!
+        st.success("SUCCESS!")
     except Exception as e:
-        st.error(f"Failed to update Google Sheet: {e}")
+        st.error(f"DETAILED ERROR: {e}")
+        st.exception(e) # This will show the full technical traceback
 
 # --- UI ---
 st.title("🕵️ Elite Price Intelligence Agent")
