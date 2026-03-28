@@ -12,12 +12,15 @@ st.set_page_config(page_title="Elite Price Agent", layout="wide", page_icon="�
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def submit_track(category, item, current_price, threshold, metadata):
+    status_placeholder = st.empty()
+    status_placeholder.info("⏳ Connecting to Google Sheets...")
+    
     try:
-        # Step A: Try to read the sheet
+        # Step A: Force a fresh read of the Tracking tab
         try:
-            df = conn.read(worksheet="Tracking")
+            df = conn.read(worksheet="Tracking", ttl=0)
         except Exception:
-            # If tab doesn't exist or is empty, create a fresh DataFrame
+            # Create headers if tab is missing/empty
             df = pd.DataFrame(columns=["DateStarted", "Category", "Item", "BasePrice", "Threshold", "Metadata", "Status"])
         
         # Step B: Prepare the new row
@@ -31,7 +34,7 @@ def submit_track(category, item, current_price, threshold, metadata):
             "Status": "Active"
         }])
         
-        # Step C: Combine and push
+        # Step C: Append and push
         if df is not None and not df.empty:
             updated_df = pd.concat([df, new_row], ignore_index=True)
         else:
@@ -39,24 +42,27 @@ def submit_track(category, item, current_price, threshold, metadata):
             
         conn.update(worksheet="Tracking", data=updated_df)
         
-        # Step D: Visual Success
+        # Step D: Clear Cache & Success UI
+        st.cache_data.clear() 
+        status_placeholder.empty()
         st.balloons()
         st.success(f"🎯 Successfully tracking: {item}")
         
     except Exception as e:
-        st.error(f"❌ LOGGING ERROR: {e}")
-        st.info("Check if your Google Sheet has a tab named 'Tracking' and is shared as 'Editor'.")
-        st.stop() # Prevents the page from refreshing and hiding the error
+        status_placeholder.empty()
+        st.error(f"❌ GSHEETS ERROR: {e}")
+        st.info("Check: 1. Is 'Tracking' tab name exact? 2. Is the Sheet shared as 'Editor' to Anyone with link?")
+        st.stop() 
 
 # --- UI LAYOUT ---
 st.title("🕵️ Elite Price Intelligence Agent")
-st.caption("Tracking Flights (Routes) and Sports (Events) via Google Sheets")
+st.caption("Live Price Tracking for Flight Routes & Sports Events")
 
 tab1, tab2, tab3 = st.tabs(["✈️ Flights", "🏀 Sports", "📋 Watchlist"])
 
-# --- TAB 1: FLIGHTS ---
+# --- TAB 1: FLIGHTS (Route-Based) ---
 with tab1:
-    st.subheader("Search & Track Flight Routes")
+    st.subheader("Track a Flight Route")
     c1, c2, c3 = st.columns(3)
     with c1:
         origin = st.text_input("From (IATA Code)", "JFK").upper().strip()
@@ -70,10 +76,10 @@ with tab1:
         if trip_type == "Round-trip":
             ret_date = st.date_input("Return Date", datetime.now() + timedelta(days=37))
 
-    f_threshold = st.slider("Alert if price drops by %:", 5, 50, 10, key="flight_slider")
+    f_threshold = st.slider("Alert me if price drops by %:", 5, 50, 10, key="flight_slider")
 
     if st.button("🔍 Find Cheapest Deals"):
-        with st.spinner("Querying Duffel API..."):
+        with st.spinner("Searching Duffel..."):
             headers = {
                 "Authorization": f"Bearer {st.secrets['DUFFEL_TOKEN']}",
                 "Duffel-Version": "v2",
@@ -90,7 +96,6 @@ with tab1:
             if res.status_code == 201:
                 offers = res.json()['data']['offers']
                 if offers:
-                    # Sort and take top 3
                     sorted_offers = sorted(offers, key=lambda x: float(x['total_amount']))[:3]
                     
                     for i, offer in enumerate(sorted_offers):
@@ -100,27 +105,26 @@ with tab1:
                         with st.container(border=True):
                             col_a, col_b = st.columns([3, 1])
                             col_a.write(f"**{airline}** | {origin} ➔ {dest}")
-                            col_a.caption(f"Cabin: {cabin.title()} | Total Price: **${price}**")
+                            col_a.caption(f"Cabin: {cabin.title()} | Today's Low: **${price}**")
                             
-                            if col_b.button(f"Track this Route", key=f"f_btn_{i}"):
+                            if col_b.button(f"Track Route @ ${price}", key=f"f_btn_{i}"):
                                 meta = {
                                     "origin": origin, "dest": dest, "date": str(dep_date), 
                                     "return": str(ret_date), "cabin": cabin, "type": trip_type
                                 }
-                                # We track the ROUTE, using the current cheapest price as our baseline
                                 submit_track("Flight", f"{origin}-{dest} ({cabin})", price, f_threshold, meta)
                 else:
-                    st.warning("No flights found for these criteria.")
+                    st.warning("No flights found.")
             else:
-                st.error(f"API Error: {res.status_code}. Verify IATA codes and Duffel Token.")
+                st.error(f"API Error {res.status_code}. Verify IATA codes and Secrets.")
 
 # --- TAB 2: SPORTS ---
 with tab2:
-    st.subheader("Search & Track Sports/Events")
-    query = st.text_input("Team or Event Name", "Lakers")
-    s_threshold = st.slider("Alert if price drops by %:", 5, 50, 10, key="sports_slider")
+    st.subheader("Track Event Ticket Prices")
+    query = st.text_input("Team or Artist", "Knicks")
+    s_threshold = st.slider("Alert on % drop:", 5, 50, 10, key="sports_slider")
 
-    if st.button("🔍 Find Event Prices"):
+    if st.button("🔍 Find Tickets"):
         url = f"https://api.seatgeek.com/2/events?q={query}&client_id={st.secrets['SG_CLIENT_ID']}"
         r = requests.get(url).json()
         events = r.get('events', [])
@@ -134,7 +138,7 @@ with tab2:
                         ca.write(f"**{e['title']}**")
                         ca.caption(f"{e['venue']['name']} | {e['datetime_local'][:10]}")
                         cb.subheader(f"${price}")
-                        if cb.button("Track Event", key=f"s_btn_{i}"):
+                        if cb.button("Track Game", key=f"s_btn_{i}"):
                             submit_track("Sports", e['short_title'], price, s_threshold, {"event_id": e['id']})
         else:
             st.info("No events found.")
@@ -143,17 +147,22 @@ with tab2:
 with tab3:
     st.subheader("📋 Your Active Watchlist")
     try:
-        data = conn.read(worksheet="Tracking")
+        # Fresh read for the watchlist
+        data = conn.read(worksheet="Tracking", ttl=0)
         if data is not None and not data.empty:
             active_only = data[data['Status'] == 'Active']
-            st.dataframe(active_only[["DateStarted", "Category", "Item", "BasePrice", "Threshold"]], use_container_width=True)
-            
-            if st.button("🗑️ Clear All Tracking Data"):
-                # This resets the sheet but keeps headers
-                empty_df = pd.DataFrame(columns=data.columns)
-                conn.update(worksheet="Tracking", data=empty_df)
-                st.rerun()
+            if not active_only.empty:
+                st.dataframe(active_only[["DateStarted", "Category", "Item", "BasePrice", "Threshold"]], use_container_width=True)
+                
+                if st.button("🗑️ Reset Tracking Tab"):
+                    # Keeps headers but wipes rows
+                    empty_df = pd.DataFrame(columns=data.columns)
+                    conn.update(worksheet="Tracking", data=empty_df)
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.write("No active tracks found.")
         else:
-            st.write("Nothing currently being tracked.")
+            st.write("Watchlist is currently empty.")
     except:
-        st.info("Add an item to create your first track!")
+        st.info("Start tracking an item to see it appear here!")
