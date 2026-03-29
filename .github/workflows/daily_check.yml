@@ -1,27 +1,33 @@
-name: Daily Price Intelligence Check
+name: Daily Price Check
+
 on:
   schedule:
-    - cron: '0 13 * * *' 
-  workflow_dispatch: 
+    - cron: "0 8 * * *"   # runs every day at 8:00 AM UTC
+  workflow_dispatch:        # allows manual trigger from GitHub Actions tab
 
 jobs:
-  build:
+  check-prices:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.11"
+
       - name: Install dependencies
-        run: pip install pandas requests
-      - name: Run Price Checker
+        run: |
+          pip install gspread google-auth requests pandas
+
+      - name: Run price checker
         env:
-          DUFFEL_TOKEN: ${{ secrets.DUFFEL_TOKEN }}
-          SG_CLIENT_ID: ${{ secrets.SG_CLIENT_ID }}
-          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
-          GSHEET_CSV_URL: ${{ secrets.GSHEET_CSV_URL }}
-        run: python check_prices.py
+          DUFFEL_TOKEN:       ${{ secrets.DUFFEL_TOKEN }}
+          NOTIFY_EMAIL:       ${{ secrets.NOTIFY_EMAIL }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_PASSWORD:     ${{ secrets.GMAIL_PASSWORD }}
+          SPREADSHEET_URL:    ${{ secrets.SPREADSHEET_URL }}
+          GSHEETS_CREDS_JSON: ${{ secrets.GSHEETS_CREDS_JSON }}
+        run: python checker.py
