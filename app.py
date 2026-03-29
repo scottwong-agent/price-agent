@@ -7,29 +7,32 @@ from streamlit_gsheets import GSheetsConnection
 # ─── PAGE SETUP ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Elite Price Agent", layout="wide", page_icon="🕵️")
 
+# ─── SESSION STATE INIT ───────────────────────────────────────────────────────
+# Results must live in session_state so they survive the rerun triggered
+# when the user clicks a "Track" button inside the results list.
+if "flight_offers" not in st.session_state:
+    st.session_state.flight_offers = []
+if "sport_events" not in st.session_state:
+    st.session_state.sport_events = []
+
 # ─── GSHEETS CONNECTION ───────────────────────────────────────────────────────
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 COLUMNS = ["DateStarted", "Category", "Item", "BasePrice", "Threshold", "Metadata", "Status"]
 
 def read_sheet():
-    """Read the Tracking sheet, always return a DataFrame with correct columns."""
     try:
         df = conn.read(worksheet="Tracking", ttl=0, usecols=COLUMNS)
         if df is None or df.empty:
             return pd.DataFrame(columns=COLUMNS)
-        # Drop completely empty rows that GSheets sometimes pads
-        df = df.dropna(how="all").reset_index(drop=True)
-        return df
+        return df.dropna(how="all").reset_index(drop=True)
     except Exception as e:
-        st.error(f"❌ READ ERROR — could not read 'Tracking' sheet: {e}")
-        st.caption("Is the tab named exactly **Tracking**? Is the service account an Editor on the sheet?")
-        return None  # Caller must handle None
+        st.error(f"❌ READ ERROR: {e}")
+        st.code(str(e), language=None)
+        return None
 
 def write_sheet(df):
-    """Write a DataFrame back to the Tracking sheet. Returns True on success."""
     try:
-        # streamlit-gsheets expects a plain DataFrame; ensure correct column order
         df = df[COLUMNS].reset_index(drop=True)
         conn.update(worksheet="Tracking", data=df)
         st.cache_data.clear()
@@ -38,36 +41,32 @@ def write_sheet(df):
         st.error(f"❌ WRITE ERROR: {e}")
         st.code(str(e), language=None)
         st.caption(
-            "Common causes: \n"
-            "1. Service account not shared as **Editor** on the Google Sheet \n"
-            "2. Tab name doesn't match exactly (should be **Tracking**) \n"
+            "Common causes:\n"
+            "1. Service account not shared as **Editor** on the Google Sheet\n"
+            "2. Tab not named exactly **Tracking**\n"
             "3. `spreadsheet` URL missing or wrong in Streamlit secrets"
         )
         return False
 
 def submit_track(category, item, current_price, threshold, metadata):
-    status = st.empty()
-    status.info("⏳ Saving to Google Sheets…")
+    with st.spinner("Saving to Google Sheets…"):
+        existing = read_sheet()
+        if existing is None:
+            return
 
-    existing = read_sheet()
-    if existing is None:
-        status.empty()
-        return  # read_sheet already showed the error
+        new_row = pd.DataFrame([{
+            "DateStarted": datetime.now().strftime("%Y-%m-%d"),
+            "Category":    category,
+            "Item":        str(item),
+            "BasePrice":   float(current_price),
+            "Threshold":   int(threshold),
+            "Metadata":    str(metadata),
+            "Status":      "Active",
+        }])
 
-    new_row = pd.DataFrame([{
-        "DateStarted": datetime.now().strftime("%Y-%m-%d"),
-        "Category":    category,
-        "Item":        str(item),
-        "BasePrice":   float(current_price),
-        "Threshold":   int(threshold),
-        "Metadata":    str(metadata),
-        "Status":      "Active",
-    }])
+        updated = pd.concat([existing, new_row], ignore_index=True)
+        success = write_sheet(updated)
 
-    updated = pd.concat([existing, new_row], ignore_index=True)
-    success = write_sheet(updated)
-
-    status.empty()
     if success:
         st.balloons()
         st.success(f"🎯 Now tracking: **{item}**")
@@ -126,27 +125,48 @@ with tab1:
 
                 if res.status_code == 201:
                     offers = res.json()["data"]["offers"]
-                    if offers:
-                        sorted_offers = sorted(offers, key=lambda x: float(x["total_amount"]))[:3]
-                        for i, offer in enumerate(sorted_offers):
-                            price   = offer["total_amount"]
-                            airline = offer["slices"][0]["segments"][0]["operating_carrier"]["name"]
-                            with st.container(border=True):
-                                col_a, col_b = st.columns([3, 1])
-                                col_a.write(f"**{airline}** | {origin} ➔ {dest}")
-                                col_a.caption(f"Price: **${price}**")
-                                if col_b.button(f"Track @ ${price}", key=f"f_btn_{i}"):
-                                    meta = {"origin": origin, "dest": dest, "date": str(dep_date), "cabin": cabin}
-                                    submit_track("Flight", f"{origin}-{dest}", price, f_threshold, meta)
-                    else:
-                        st.warning("No flights found for this route and date.")
+                    # ── Store in session_state so Track buttons survive the rerun ──
+                    st.session_state.flight_offers = [
+                        {
+                            "price":    o["total_amount"],
+                            "airline":  o["slices"][0]["segments"][0]["operating_carrier"]["name"],
+                            "origin":   origin,
+                            "dest":     dest,
+                            "dep_date": str(dep_date),
+                            "cabin":    cabin,
+                            "threshold": f_threshold,
+                        }
+                        for o in sorted(offers, key=lambda x: float(x["total_amount"]))[:3]
+                    ]
                 else:
                     st.error(f"Duffel API error {res.status_code}: {res.text[:300]}")
+                    st.session_state.flight_offers = []
 
             except KeyError:
                 st.error("⚠️ `DUFFEL_TOKEN` not found in Streamlit secrets.")
             except Exception as e:
                 st.error(f"Unexpected error: {e}")
+
+    # ── Render stored flight results (persists across reruns) ──
+    for i, offer in enumerate(st.session_state.flight_offers):
+        with st.container(border=True):
+            col_a, col_b = st.columns([3, 1])
+            col_a.write(f"**{offer['airline']}** | {offer['origin']} ➔ {offer['dest']}")
+            col_a.caption(f"Cabin: **{offer['cabin']}** | Date: {offer['dep_date']} | Price: **${offer['price']}**")
+            if col_b.button(f"Track @ ${offer['price']}", key=f"f_btn_{i}"):
+                meta = {
+                    "origin": offer["origin"],
+                    "dest":   offer["dest"],
+                    "date":   offer["dep_date"],
+                    "cabin":  offer["cabin"],
+                }
+                submit_track(
+                    "Flight",
+                    f"{offer['origin']}-{offer['dest']}",
+                    offer["price"],
+                    offer["threshold"],
+                    meta,
+                )
 
 # ── TAB 2: SPORTS ─────────────────────────────────────────────────────────────
 with tab2:
@@ -164,30 +184,44 @@ with tab2:
                 r      = requests.get(url, timeout=15).json()
                 events = r.get("events", [])
 
-                if events:
-                    for i, e in enumerate(events[:5]):
-                        price = e["stats"].get("lowest_price")
-                        if price:
-                            with st.container(border=True):
-                                ca, cb = st.columns([3, 1])
-                                ca.write(f"**{e['title']}**")
-                                ca.caption(f"{e['venue']['name']} | {e['datetime_local'][:10]}")
-                                cb.subheader(f"${price}")
-                                if cb.button("Track Game", key=f"s_btn_{i}"):
-                                    submit_track(
-                                        "Sports",
-                                        e["short_title"],
-                                        price,
-                                        s_threshold,
-                                        {"event_id": e["id"]},
-                                    )
-                else:
-                    st.warning("No events found. Try a different search term.")
+                # ── Store in session_state so Track buttons survive the rerun ──
+                st.session_state.sport_events = [
+                    {
+                        "title":      e["title"],
+                        "short_title": e["short_title"],
+                        "venue":      e["venue"]["name"],
+                        "date":       e["datetime_local"][:10],
+                        "price":      e["stats"].get("lowest_price"),
+                        "event_id":   e["id"],
+                        "threshold":  s_threshold,
+                    }
+                    for e in events[:5]
+                    if e["stats"].get("lowest_price")
+                ]
+
+                if not st.session_state.sport_events:
+                    st.warning("No events with prices found. Try a different search term.")
 
             except KeyError:
                 st.error("⚠️ `SG_CLIENT_ID` not found in Streamlit secrets.")
             except Exception as e:
                 st.error(f"Unexpected error: {e}")
+
+    # ── Render stored event results (persists across reruns) ──
+    for i, e in enumerate(st.session_state.sport_events):
+        with st.container(border=True):
+            ca, cb = st.columns([3, 1])
+            ca.write(f"**{e['title']}**")
+            ca.caption(f"{e['venue']} | {e['date']}")
+            cb.subheader(f"${e['price']}")
+            if cb.button("Track Game", key=f"s_btn_{i}"):
+                submit_track(
+                    "Sports",
+                    e["short_title"],
+                    e["price"],
+                    e["threshold"],
+                    {"event_id": e["event_id"]},
+                )
 
 # ── TAB 3: WATCHLIST ──────────────────────────────────────────────────────────
 with tab3:
