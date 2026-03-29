@@ -8,7 +8,6 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Elite Price Agent", layout="wide", page_icon="🕵️")
 
 # 2. GSHEETS CONNECTION
-# Note: Ensure [connections.gsheets] is in your Streamlit Cloud Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def submit_track(category, item, current_price, threshold, metadata):
@@ -16,11 +15,15 @@ def submit_track(category, item, current_price, threshold, metadata):
     status_placeholder.info("⏳ Connecting to Google Sheets...")
     
     try:
-        # Step A: Force a fresh read of the Tracking tab
+        # DEBUG: Check if function even starts
+        st.write(f"DEBUG: Attempting to save {item}...") 
+
         try:
+            # Read fresh data from the 'Tracking' tab
             df = conn.read(worksheet="Tracking", ttl=0)
-        except Exception:
-            # Create headers if tab is missing/empty
+        except Exception as read_e:
+            # DEBUG: Show if the tab 'Tracking' isn't found
+            st.error(f"READ ERROR: {read_e}. Ensure your tab is named exactly 'Tracking'.")
             df = pd.DataFrame(columns=["DateStarted", "Category", "Item", "BasePrice", "Threshold", "Metadata", "Status"])
         
         # Step B: Prepare the new row
@@ -40,6 +43,7 @@ def submit_track(category, item, current_price, threshold, metadata):
         else:
             updated_df = new_row
             
+        # Push to Google Sheets
         conn.update(worksheet="Tracking", data=updated_df)
         
         # Step D: Clear Cache & Success UI
@@ -50,8 +54,9 @@ def submit_track(category, item, current_price, threshold, metadata):
         
     except Exception as e:
         status_placeholder.empty()
-        st.error(f"❌ GSHEETS ERROR: {e}")
-        st.info("Check: 1. Is 'Tracking' tab name exact? 2. Is the Sheet shared as 'Editor' to Anyone with link?")
+        # DEBUG: The specific reason the "Save" failed
+        st.error(f"❌ GSHEETS UPDATE ERROR: {e}")
+        st.info("Check: 1. Is 'Tracking' tab name exact? 2. Is the Sheet shared as 'Editor' with the Service Account?")
         st.stop() 
 
 # --- UI LAYOUT ---
@@ -60,15 +65,15 @@ st.caption("Live Price Tracking for Flight Routes & Sports Events")
 
 tab1, tab2, tab3 = st.tabs(["✈️ Flights", "🏀 Sports", "📋 Watchlist"])
 
-# --- TAB 1: FLIGHTS (Route-Based) ---
+# --- TAB 1: FLIGHTS ---
 with tab1:
     st.subheader("Track a Flight Route")
     c1, c2, c3 = st.columns(3)
     with c1:
-        origin = st.text_input("From (IATA Code)", "JFK").upper().strip()
+        origin = st.text_input("From (IATA)", "SFO").upper().strip()
         trip_type = st.selectbox("Trip Type", ["One-way", "Round-trip"])
     with c2:
-        dest = st.text_input("To (IATA Code)", "LAX").upper().strip()
+        dest = st.text_input("To (IATA)", "JFK").upper().strip()
         cabin = st.selectbox("Cabin Class", ["economy", "premium_economy", "business", "first"])
     with c3:
         dep_date = st.date_input("Departure Date", datetime.now() + timedelta(days=30))
@@ -97,7 +102,6 @@ with tab1:
                 offers = res.json()['data']['offers']
                 if offers:
                     sorted_offers = sorted(offers, key=lambda x: float(x['total_amount']))[:3]
-                    
                     for i, offer in enumerate(sorted_offers):
                         price = offer['total_amount']
                         airline = offer['slices'][0]['segments'][0]['operating_carrier']['name']
@@ -105,23 +109,18 @@ with tab1:
                         with st.container(border=True):
                             col_a, col_b = st.columns([3, 1])
                             col_a.write(f"**{airline}** | {origin} ➔ {dest}")
-                            col_a.caption(f"Cabin: {cabin.title()} | Today's Low: **${price}**")
+                            col_a.caption(f"Price: **${price}**")
                             
-                            if col_b.button(f"Track Route @ ${price}", key=f"f_btn_{i}"):
-                                meta = {
-                                    "origin": origin, "dest": dest, "date": str(dep_date), 
-                                    "return": str(ret_date), "cabin": cabin, "type": trip_type
-                                }
-                                submit_track("Flight", f"{origin}-{dest} ({cabin})", price, f_threshold, meta)
+                            if col_b.button(f"Track @ ${price}", key=f"f_btn_{i}"):
+                                meta = {"origin": origin, "dest": dest, "date": str(dep_date), "cabin": cabin}
+                                submit_track("Flight", f"{origin}-{dest}", price, f_threshold, meta)
                 else:
                     st.warning("No flights found.")
-            else:
-                st.error(f"API Error {res.status_code}. Verify IATA codes and Secrets.")
 
 # --- TAB 2: SPORTS ---
 with tab2:
     st.subheader("Track Event Ticket Prices")
-    query = st.text_input("Team or Artist", "Knicks")
+    query = st.text_input("Team or Artist", "Yankees")
     s_threshold = st.slider("Alert on % drop:", 5, 50, 10, key="sports_slider")
 
     if st.button("🔍 Find Tickets"):
@@ -140,29 +139,20 @@ with tab2:
                         cb.subheader(f"${price}")
                         if cb.button("Track Game", key=f"s_btn_{i}"):
                             submit_track("Sports", e['short_title'], price, s_threshold, {"event_id": e['id']})
-        else:
-            st.info("No events found.")
 
 # --- TAB 3: WATCHLIST ---
 with tab3:
     st.subheader("📋 Your Active Watchlist")
     try:
-        # Fresh read for the watchlist
         data = conn.read(worksheet="Tracking", ttl=0)
         if data is not None and not data.empty:
-            active_only = data[data['Status'] == 'Active']
-            if not active_only.empty:
-                st.dataframe(active_only[["DateStarted", "Category", "Item", "BasePrice", "Threshold"]], use_container_width=True)
-                
-                if st.button("🗑️ Reset Tracking Tab"):
-                    # Keeps headers but wipes rows
-                    empty_df = pd.DataFrame(columns=data.columns)
-                    conn.update(worksheet="Tracking", data=empty_df)
-                    st.cache_data.clear()
-                    st.rerun()
-            else:
-                st.write("No active tracks found.")
+            st.dataframe(data[["DateStarted", "Category", "Item", "BasePrice", "Threshold", "Status"]], use_container_width=True)
+            if st.button("🗑️ Reset Tracking Tab"):
+                empty_df = pd.DataFrame(columns=data.columns)
+                conn.update(worksheet="Tracking", data=empty_df)
+                st.cache_data.clear()
+                st.rerun()
         else:
-            st.write("Watchlist is currently empty.")
+            st.write("Watchlist is empty.")
     except:
         st.info("Start tracking an item to see it appear here!")
