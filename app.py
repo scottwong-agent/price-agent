@@ -123,7 +123,7 @@ with tab1:
                     timeout=30,
                 )
 
-                if res.status_code == 201:
+                if res.status_code in (200, 201):
                     offers = res.json()["data"]["offers"]
                     # ── Store in session_state so Track buttons survive the rerun ──
                     st.session_state.flight_offers = [
