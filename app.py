@@ -22,7 +22,6 @@ SCOPES  = ["https://www.googleapis.com/auth/spreadsheets"]
 @st.cache_resource
 def get_worksheet():
     s = st.secrets["connections"]["gsheets"]
-    # Fix private key — Streamlit sometimes stores \n as literal backslash-n
     private_key = s["private_key"].replace("\\n", "\n")
     creds_dict = {
         "type":                        "service_account",
@@ -40,20 +39,6 @@ def get_worksheet():
     client = gspread.authorize(creds)
     sheet  = client.open_by_url(s["spreadsheet"])
     return sheet.worksheet("Tracking")
-
-# ─── DEBUG PANEL (shows full error prominently) ───────────────────────────────
-with st.expander("🔧 Connection Debug", expanded=True):
-    try:
-        ws = get_worksheet()
-        st.success("✅ Google Sheets connected successfully!")
-        st.caption(f"Worksheet: {ws.title} | Rows: {ws.row_count}")
-    except Exception as e:
-        st.error("❌ Connection failed — full error below:")
-        st.text(traceback.format_exc())   # full traceback, always visible as plain text
-        st.warning("Once fixed, remove or collapse this debug panel.")
-        st.stop()  # Don't run the rest of the app if connection is broken
-
-# ─── SHEET HELPERS ───────────────────────────────────────────────────────────
 
 def read_sheet():
     try:
@@ -102,12 +87,12 @@ def submit_track(category, item, current_price, threshold, metadata):
         success = write_sheet(updated)
     if success:
         st.balloons()
-        st.success(f"🎯 Now tracking: **{item}**")
+        st.success(f"🎯 Now tracking: **{item}** — you'll get a daily email with price updates!")
 
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
 st.title("🕵️ Elite Price Intelligence Agent")
-st.caption("Live Price Tracking for Flight Routes & Sports Events")
+st.caption("Live Price Tracking for Flight Routes & Sports Events · Daily email alerts via GitHub Actions")
 
 tab1, tab2, tab3 = st.tabs(["✈️ Flights", "🏀 Sports", "📋 Watchlist"])
 
@@ -171,8 +156,8 @@ with tab1:
             col_a.write(f"**{offer['airline']}** | {offer['origin']} ➔ {offer['dest']}")
             col_a.caption(f"Cabin: **{offer['cabin']}** | Date: {offer['dep_date']} | Price: **${offer['price']}**")
             if col_b.button(f"Track @ ${offer['price']}", key=f"f_btn_{i}"):
-                submit_track("Flight", f"{offer['origin']}-{offer['dest']}", offer["price"], offer["threshold"],
-                             {"origin": offer["origin"], "dest": offer["dest"], "date": offer["dep_date"], "cabin": offer["cabin"]})
+                meta = {"origin": offer["origin"], "dest": offer["dest"], "date": offer["dep_date"], "cabin": offer["cabin"]}
+                submit_track("Flight", f"{offer['origin']}-{offer['dest']}", offer["price"], offer["threshold"], meta)
 
 # ── TAB 2: SPORTS ─────────────────────────────────────────────────────────────
 with tab2:
@@ -211,9 +196,10 @@ with tab2:
 # ── TAB 3: WATCHLIST ──────────────────────────────────────────────────────────
 with tab3:
     st.subheader("📋 Your Active Watchlist")
+    st.caption("Prices are checked automatically every day at 8 AM UTC — you'll receive an email summary.")
     data = read_sheet()
     if data is None:
-        st.info("Fix the connection error in the debug panel above.")
+        st.info("Fix the connection error above, then refresh.")
     elif data.empty:
         st.info("No items tracked yet. Add one from the Flights or Sports tabs.")
     else:
