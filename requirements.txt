@@ -4,3 +4,4 @@ google-auth
 duffel-api
 requests
 streamlit
+gspread
