@@ -8,6 +8,8 @@ on:
 jobs:
   check-prices:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repo
@@ -23,11 +25,11 @@ jobs:
 
       - name: Run price checker
         env:
-          DUFFEL_TOKEN:       ${{ secrets.DUFFEL_TOKEN }}
-          SG_CLIENT_ID:       ${{ secrets.SG_CLIENT_ID }}
-          EMAIL_SENDER:       ${{ secrets.EMAIL_SENDER }}
+          DUFFEL:             ${{ secrets.DUFFEL }}
+          SG:                 ${{ secrets.SG }}
+          SENDER:             ${{ secrets.SENDER }}
           EMAIL_PASSWORD:     ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECEIVER:     ${{ secrets.EMAIL_RECEIVER }}
+          RECIEVER:           ${{ secrets.RECIEVER }}
           GSHEET_CSV_URL:     ${{ secrets.GSHEET_CSV_URL }}
           SPREADSHEET_URL:    ${{ secrets.SPREADSHEET_URL }}
           GSHEETS_CREDS_JSON: ${{ secrets.GSHEETS_CREDS_JSON }}
